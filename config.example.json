@@ -1,0 +1,10 @@
+{
+  "trigger_hotkey": "<f8>",
+  "capture_region": {"left": 0, "top": 0, "width": 1330, "height": 939},
+  "save_dir": "./captures",
+  "action_delay": 0.6,
+  "repeat_count": 1,
+  "page_turn_key": "right",
+  "monitor_index": 1,
+  "target_mode": "window"
+}

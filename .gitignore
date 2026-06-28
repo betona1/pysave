@@ -1,0 +1,16 @@
+# 캡처 결과물 (대용량 이미지/PDF — 저작권 자료 포함 가능, 절대 커밋 금지)
+captures/
+사주명리학/
+*.png
+*.pdf
+# 개인 설정(좌표·저장경로 등 PC마다 다름)
+config.json
+# 파이썬
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+venv/
+.venv/
+.claude/
