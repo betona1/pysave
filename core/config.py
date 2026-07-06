@@ -24,6 +24,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "pages_per_view": 2,
     "auto_pdf": True,
     "capture_mode": "auto",   # "auto"(키 전송+반복) | "manual"(핫키로 1장 캡처)
+    "video_fps": 15,          # 동영상 녹화 프레임레이트
+    "video_dir": "",          # 동영상 저장 폴더(비우면 save_dir 사용)
+    "record_audio": True,     # 시스템 소리(루프백) 함께 녹음
+    "video_max_seconds": 0,   # 녹화 자동 종료 시간(초, 0=무제한)
 }
 
 
@@ -58,3 +62,17 @@ def resolve_save_dir(config: dict[str, Any]) -> str:
         save_dir = os.path.join(_BASE_DIR, save_dir)
     os.makedirs(save_dir, exist_ok=True)
     return save_dir
+
+
+def resolve_video_dir(config: dict[str, Any]) -> str:
+    """동영상 저장 폴더를 절대경로로 변환하고 폴더 생성.
+
+    video_dir 이 비어 있으면 사진 저장 폴더(save_dir)를 그대로 사용한다.
+    """
+    video_dir = (config.get("video_dir") or "").strip()
+    if not video_dir:
+        return resolve_save_dir(config)
+    if not os.path.isabs(video_dir):
+        video_dir = os.path.join(_BASE_DIR, video_dir)
+    os.makedirs(video_dir, exist_ok=True)
+    return video_dir

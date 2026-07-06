@@ -53,6 +53,21 @@ def get_monitor(index: int) -> dict[str, Any] | None:
     return None
 
 
+def virtual_bounds() -> dict[str, int] | None:
+    """모든 모니터를 합친 가상 데스크톱 전체 경계(index 0)를 반환. 실패 시 None."""
+    try:
+        with mss.mss() as sct:
+            mon = sct.monitors[0]
+            return {
+                "left": int(mon["left"]),
+                "top": int(mon["top"]),
+                "width": int(mon["width"]),
+                "height": int(mon["height"]),
+            }
+    except Exception:
+        return None
+
+
 def monitor_region(index: int) -> dict[str, int] | None:
     """선택한 모니터 전체를 capture_region 형식으로 반환."""
     mon = get_monitor(index)

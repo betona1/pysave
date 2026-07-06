@@ -23,6 +23,9 @@ from core import config as cfg_mod
 from core import monitors, pdf, windows
 from core import automator, capturer
 from core.hotkey import HotkeyManager
+from core.recorder import (
+    VideoRecorder, next_video_name as recorder_next_name, validate_region,
+)
 from core.worker import CaptureWorker
 from ui.hotkey_capture import HotkeyCaptureDialog
 from ui.monitor_identifier import MonitorIdentifier
@@ -43,6 +46,7 @@ class MainWindow(QMainWindow):
         self._identifier = MonitorIdentifier()
         self._picker: RegionPicker | None = None
         self._worker: CaptureWorker | None = None
+        self._recorder: VideoRecorder | None = None
         self._running = False
 
         self._build_ui()
@@ -206,6 +210,64 @@ class MainWindow(QMainWindow):
         hk_l.addWidget(btn_browse)
         root.addWidget(hk_box)
 
+        # --- 동영상 녹화 ---
+        vid_box = QGroupBox("6. 동영상 녹화 (설정한 캡처 영역)")
+        vid_v = QVBoxLayout(vid_box)
+
+        # 동영상 저장 폴더(사진과 별도로 지정 가능, 비우면 사진 폴더 사용)
+        vdir_l = QHBoxLayout()
+        self.txt_videodir = QLineEdit()
+        self.txt_videodir.setPlaceholderText("(비우면 사진 저장 폴더에 저장)")
+        self.txt_videodir.editingFinished.connect(self._refresh_video_name)
+        btn_video_browse = QPushButton("폴더…")
+        btn_video_browse.clicked.connect(self.on_browse_videodir)
+        vdir_l.addWidget(QLabel("동영상 저장 폴더:"))
+        vdir_l.addWidget(self.txt_videodir, 1)
+        vdir_l.addWidget(btn_video_browse)
+        vid_v.addLayout(vdir_l)
+
+        # 파일명(기본: 폴더명_숫자, 이미 있으면 숫자+1) — 수정 가능
+        vname_l = QHBoxLayout()
+        self.txt_videoname = QLineEdit()
+        self.txt_videoname.setPlaceholderText("폴더명_1.mp4")
+        btn_name_auto = QPushButton("자동 이름")
+        btn_name_auto.clicked.connect(self._refresh_video_name)
+        vname_l.addWidget(QLabel("파일명:"))
+        vname_l.addWidget(self.txt_videoname, 1)
+        vname_l.addWidget(btn_name_auto)
+        vid_v.addLayout(vname_l)
+
+        # FPS + 소리 + 자동 종료 + 녹화 버튼
+        vrec_l = QHBoxLayout()
+        self.spn_fps = QSpinBox()
+        self.spn_fps.setRange(1, 60)
+        self.spn_fps.setValue(15)
+        self.spn_fps.setSuffix(" fps")
+        self.chk_audio = QCheckBox("시스템 소리 함께 녹음")
+        self.chk_audio.setChecked(True)
+        # 자동 종료 시간: 시 / 분 / 초 (모두 0이면 무제한)
+        self.spn_h = QSpinBox(); self.spn_h.setRange(0, 99); self.spn_h.setSuffix(" 시")
+        self.spn_m = QSpinBox(); self.spn_m.setRange(0, 59); self.spn_m.setSuffix(" 분")
+        self.spn_s = QSpinBox(); self.spn_s.setRange(0, 59); self.spn_s.setSuffix(" 초")
+        self.btn_record = QPushButton("⏺ 영역 동영상 녹화 시작")
+        self.btn_record.clicked.connect(self.on_toggle_record)
+        self.lbl_record = QLabel("대기 중")
+        vrec_l.addWidget(QLabel("프레임:"))
+        vrec_l.addWidget(self.spn_fps)
+        vrec_l.addSpacing(8)
+        vrec_l.addWidget(self.chk_audio)
+        vrec_l.addSpacing(8)
+        vrec_l.addWidget(QLabel("자동 종료:"))
+        vrec_l.addWidget(self.spn_h)
+        vrec_l.addWidget(self.spn_m)
+        vrec_l.addWidget(self.spn_s)
+        vrec_l.addWidget(QLabel("(모두 0=무제한)"))
+        vrec_l.addSpacing(8)
+        vrec_l.addWidget(self.btn_record)
+        vrec_l.addWidget(self.lbl_record, 1)
+        vid_v.addLayout(vrec_l)
+        root.addWidget(vid_box)
+
         # --- 실행 버튼 ---
         run_l = QHBoxLayout()
         self.btn_start = QPushButton("● 핫키 대기 시작")
@@ -275,6 +337,14 @@ class MainWindow(QMainWindow):
         self.chk_auto_pdf.setChecked(bool(c.get("auto_pdf", True)))
         self.txt_hotkey.setText(c.get("trigger_hotkey", "<f8>"))
         self.txt_savedir.setText(c.get("save_dir", "./captures"))
+        self.spn_fps.setValue(int(c.get("video_fps", 15)))
+        self.txt_videodir.setText(c.get("video_dir", "") or "")
+        self.chk_audio.setChecked(bool(c.get("record_audio", True)))
+        total = int(c.get("video_max_seconds", 0))
+        self.spn_h.setValue(total // 3600)
+        self.spn_m.setValue((total % 3600) // 60)
+        self.spn_s.setValue(total % 60)
+        self._refresh_video_name()
         mode = c.get("capture_mode", "auto")
         self.rb_mode_manual.setChecked(mode == "manual")
         self.rb_mode_auto.setChecked(mode != "manual")
@@ -299,6 +369,11 @@ class MainWindow(QMainWindow):
         c["capture_mode"] = "manual" if self.rb_mode_manual.isChecked() else "auto"
         c["trigger_hotkey"] = self.txt_hotkey.text().strip() or "<f8>"
         c["save_dir"] = self.txt_savedir.text().strip() or "./captures"
+        c["video_fps"] = self.spn_fps.value()
+        c["video_dir"] = self.txt_videodir.text().strip()
+        c["record_audio"] = self.chk_audio.isChecked()
+        c["video_max_seconds"] = (
+            self.spn_h.value() * 3600 + self.spn_m.value() * 60 + self.spn_s.value())
         return c
 
     def _recalc_repeat(self) -> None:
@@ -597,6 +672,12 @@ class MainWindow(QMainWindow):
         if d:
             self.txt_savedir.setText(d)
 
+    def on_browse_videodir(self) -> None:
+        start = self.txt_videodir.text().strip() or self.txt_savedir.text().strip()
+        d = QFileDialog.getExistingDirectory(self, "동영상 저장 폴더 선택", start)
+        if d:
+            self.txt_videodir.setText(d)
+
     def on_save_config(self) -> None:
         self.config = self._collect_from_ui()
         cfg_mod.save_config(self._persistable(self.config))
@@ -638,6 +719,118 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "PDF", msg)
 
+    # -------------------------------------------------------- video record
+    def _video_base_name(self) -> str:
+        """동영상 파일명 기본값에 쓸 폴더명."""
+        cfg = self._collect_from_ui()
+        video_dir = cfg_mod.resolve_video_dir(cfg)
+        return os.path.basename(os.path.normpath(video_dir)) or "shotkey"
+
+    def _refresh_video_name(self) -> None:
+        """파일명 입력칸을 '폴더명_숫자.mp4' 다음 번호로 채운다(비어 있을 때만 자동 채움도 겸)."""
+        cfg = self._collect_from_ui()
+        video_dir = cfg_mod.resolve_video_dir(cfg)
+        base = os.path.basename(os.path.normpath(video_dir)) or "shotkey"
+        self.txt_videoname.setText(recorder_next_name(video_dir, base))
+
+    def on_toggle_record(self) -> None:
+        # 녹화 중이면 정지
+        if self._recorder is not None and self._recorder.isRunning():
+            self.lbl_record.setText("정지 중… (파일 마무리)")
+            self._recorder.stop()
+            return
+
+        cfg = self._collect_from_ui()
+
+        # 1) 영상 캡처 영역 검증 — 없거나 이상하면 메시지 띄우고 중단
+        region = cfg.get("capture_region")
+        bounds = monitors.virtual_bounds()
+        ok, msg = validate_region(region, bounds)
+        if not ok:
+            QMessageBox.warning(self, "영상 캡처 위치 확인", msg)
+            self.log("영상 녹화 취소 — 캡처 위치 문제: " + msg.splitlines()[0])
+            return
+
+        # 2) 동영상 저장 폴더 검증(생성 시도) — 실패하면 메시지
+        try:
+            video_dir = cfg_mod.resolve_video_dir(cfg)
+        except Exception as exc:
+            where = (cfg.get("video_dir") or "").strip() or cfg.get("save_dir", "")
+            QMessageBox.warning(
+                self, "동영상 저장 폴더 확인",
+                f"동영상 저장 폴더를 사용할 수 없습니다:\n{where}\n\n{exc}\n\n"
+                "폴더 경로를 다시 지정하세요.")
+            self.log(f"영상 녹화 취소 — 저장 폴더 문제: {where} ({exc})")
+            return
+
+        # 3) 검증 통과 → 지정한 영역/폴더를 config.json 에 저장(기억)
+        cfg_mod.save_config(self._persistable(cfg))
+        self.log(
+            f"영상 캡처 위치 확인 OK — 영역 left={region.get('left')}, "
+            f"top={region.get('top')}, {region.get('width')}x{region.get('height')} / "
+            f"폴더 {video_dir}")
+
+        # 파일명: 입력값 사용, 비어 있으면 자동 생성. 확장자 보정.
+        fname = self.txt_videoname.text().strip()
+        if not fname:
+            base = os.path.basename(os.path.normpath(video_dir)) or "shotkey"
+            fname = recorder_next_name(video_dir, base)
+        if not fname.lower().endswith(".mp4"):
+            fname += ".mp4"
+        out = os.path.join(video_dir, fname)
+        if os.path.exists(out):
+            ans = QMessageBox.question(
+                self, "덮어쓰기 확인",
+                f"'{fname}' 파일이 이미 있습니다. 덮어쓸까요?\n"
+                "('아니오'를 누르면 다음 번호로 저장합니다.)")
+            if ans != QMessageBox.StandardButton.Yes:
+                base = os.path.basename(os.path.normpath(video_dir)) or "shotkey"
+                fname = recorder_next_name(video_dir, base)
+                out = os.path.join(video_dir, fname)
+                self.txt_videoname.setText(fname)
+
+        fps = cfg.get("video_fps", 15)
+        audio = bool(cfg.get("record_audio", True))
+        max_sec = float(cfg.get("video_max_seconds", 0))
+
+        self._recorder = VideoRecorder(
+            region, out, fps, record_audio=audio, max_seconds=max_sec)
+        self._recorder.progress.connect(self._on_record_progress)
+        self._recorder.note.connect(self.log)
+        self._recorder.finished_ok.connect(self._on_record_finished)
+        self._recorder.failed.connect(self._on_record_failed)
+        self._recorder.start()
+
+        self.btn_record.setText("⏹ 녹화 정지")
+        if max_sec > 0:
+            m, s = divmod(int(max_sec), 60)
+            h, m = divmod(m, 60)
+            limit = f", 자동종료 {h:02d}:{m:02d}:{s:02d}"
+        else:
+            limit = ""
+        self.lbl_record.setText("녹화 중…")
+        self.log(
+            f"동영상 녹화 시작 — {os.path.basename(out)}, "
+            f"영역 {region.get('width')}x{region.get('height')}, {fps}fps, "
+            f"소리 {'ON' if audio else 'OFF'}{limit}")
+
+    def _on_record_progress(self, elapsed: float, frames: int) -> None:
+        self.lbl_record.setText(f"녹화 중… {elapsed:0.1f}초 / {frames}프레임")
+
+    def _on_record_finished(self, path: str, frames: int) -> None:
+        self.btn_record.setText("⏺ 영역 동영상 녹화 시작")
+        self.lbl_record.setText(f"저장됨: {os.path.basename(path)} ({frames}프레임)")
+        self.log(f"동영상 저장 완료 — {path} ({frames}프레임)")
+        # 다음 녹화를 위해 파일명을 다음 번호로 자동 갱신
+        self._refresh_video_name()
+        QMessageBox.information(self, "동영상 녹화", f"저장 완료:\n{path}\n{frames}프레임")
+
+    def _on_record_failed(self, msg: str) -> None:
+        self.btn_record.setText("⏺ 영역 동영상 녹화 시작")
+        self.lbl_record.setText("실패")
+        self.log(f"동영상 녹화 실패: {msg}")
+        QMessageBox.critical(self, "동영상 녹화 오류", msg)
+
     def log(self, msg: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}] {msg}"
@@ -658,4 +851,7 @@ class MainWindow(QMainWindow):
         if self._worker and self._worker.isRunning():
             self._worker.stop()
             self._worker.wait(2000)
+        if self._recorder and self._recorder.isRunning():
+            self._recorder.stop()
+            self._recorder.wait(3000)
         super().closeEvent(event)

@@ -1,17 +1,21 @@
-# ShotKey — 전역 핫키 자동 화면 캡처
+# ShotKey — 전역 핫키 자동 화면 캡처 + 영역 동영상 녹화
 
 핫키를 누르면 **대상 창(또는 좌표)에 페이지 넘김 키(기본 →)** 를 보낸 뒤,
 지정한 영역을 **자동으로 스크린샷 저장**합니다. 전자책·만화·PDF 연속 캡처 자동화용.
+추가로 **지정한 영역을 시스템 소리와 함께 동영상(.mp4)으로 녹화**할 수 있습니다.
 
-## 설치
+## 바로 실행 (설치 없이)
+
+파이썬이 없어도 됩니다. [Releases](https://github.com/betona1/pysave/releases) 에서
+`ShotKey.exe` 를 내려받아 더블클릭하면 바로 실행됩니다(Windows).
+
+> exe 안에 파이썬·ffmpeg 까지 모두 들어 있어 용량이 큽니다. 첫 실행은 압축 해제로
+> 몇 초 걸릴 수 있습니다. `captures/` 등 저장 폴더는 **처음 사용할 때 자동으로 생성**됩니다.
+
+## 소스로 실행 (개발자)
 
 ```bash
 pip install -r requirements.txt
-```
-
-## 실행
-
-```bash
 python main.py
 ```
 
@@ -32,12 +36,38 @@ python main.py
 
 - `captures/page_001.png`, `page_002.png` … (0패딩 순번, 이어찍기 시 마지막 번호+1부터)
 - `captures/shotkey_HHMMSS.pdf` (PDF 병합 시)
+- `<저장폴더>/<폴더명>_1.mp4` (동영상 녹화 시, 소리 포함)
 
-## exe 빌드 (Windows)
+## 동영상 녹화 (설정한 캡처 영역)
+
+캡처 영역(2번에서 지정한 사각형)을 그대로 **동영상 .mp4 로 녹화**합니다.
+
+1. **동영상 저장 폴더** — 비워두면 사진 저장 폴더에 함께 저장됩니다.
+2. **파일명** — 기본은 `폴더명_1.mp4`, 같은 이름이 있으면 자동으로 번호가 올라갑니다(`자동 이름` 버튼).
+3. **프레임(fps)** — 1~60. 화면 녹화는 보통 15fps 로 충분합니다.
+4. **시스템 소리 함께 녹음** — 체크하면 **스피커로 나가는 소리(WASAPI 루프백)** 를 같이 담습니다.
+   - 루프백 장치가 없거나 완전 무음이면 **소리 없이 영상만** 저장하고 안내를 남깁니다.
+5. **자동 종료** — 시/분/초로 지정하면 그 시간이 지나면 녹화가 자동으로 멈춥니다(모두 0 = 무제한).
+6. `⏺ 영역 동영상 녹화 시작` → 다시 누르면(`⏹ 녹화 정지`) 멈추고 파일을 마무리합니다.
+
+> 영상 길이는 **실제 경과 시간 기준으로 fps 를 보정**해 저장하므로 소리와 어긋나지 않습니다.
+> 마무리 단계에서 번들 ffmpeg 로 영상+소리를 합쳐 최종 mp4 를 만듭니다.
+
+## exe 빌드 (Windows, 개발자용)
 
 ```bash
-pyinstaller --noconsole --onefile main.py
+pyinstaller --noconsole --onefile --name ShotKey ^
+  --exclude-module PyQt5 ^
+  --collect-all soundcard ^
+  --collect-all imageio_ffmpeg ^
+  --collect-submodules pynput ^
+  --collect-submodules pyautogui ^
+  main.py
 ```
+
+`soundcard`(소리 녹음)와 `imageio_ffmpeg`(번들 ffmpeg)는 지연 import 라서
+`--collect-all` 로 명시해야 exe 에 포함됩니다. PyQt5 가 함께 설치돼 있으면
+`--exclude-module PyQt5` 로 Qt 바인딩 충돌을 막습니다.
 
 ## 끝 페이지 → 반복 횟수 / 자동 PDF
 

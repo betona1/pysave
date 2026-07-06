@@ -3,3 +3,7 @@ pynput>=1.7
 pyautogui>=0.9.54
 mss>=9.0
 img2pdf>=0.5
+opencv-python>=4.8
+numpy>=1.24
+soundcard>=0.4.2
+imageio-ffmpeg>=0.5
