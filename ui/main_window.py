@@ -26,6 +26,7 @@ from core.hotkey import HotkeyManager
 from core.recorder import (
     VideoRecorder, next_video_name as recorder_next_name, validate_region,
 )
+from core.gif_maker import GifMaker, probe_duration, default_gif_path
 from core.worker import CaptureWorker
 from ui.hotkey_capture import HotkeyCaptureDialog
 from ui.monitor_identifier import MonitorIdentifier
@@ -47,6 +48,8 @@ class MainWindow(QMainWindow):
         self._picker: RegionPicker | None = None
         self._worker: CaptureWorker | None = None
         self._recorder: VideoRecorder | None = None
+        self._gifmaker: GifMaker | None = None
+        self._gif_duration: float = 0.0
         self._running = False
 
         self._build_ui()
@@ -267,6 +270,69 @@ class MainWindow(QMainWindow):
         vrec_l.addWidget(self.lbl_record, 1)
         vid_v.addLayout(vrec_l)
         root.addWidget(vid_box)
+
+        # --- 동영상 → GIF 변환 ---
+        gif_box = QGroupBox("7. 동영상 → GIF 변환 (특정 구간)")
+        gif_v = QVBoxLayout(gif_box)
+
+        # 원본 동영상 선택
+        gsrc_l = QHBoxLayout()
+        self.txt_gif_src = QLineEdit()
+        self.txt_gif_src.setPlaceholderText("변환할 동영상(.mp4) 파일 선택")
+        btn_gif_browse = QPushButton("동영상 선택…")
+        btn_gif_browse.clicked.connect(self.on_browse_gif_src)
+        gsrc_l.addWidget(QLabel("원본 동영상:"))
+        gsrc_l.addWidget(self.txt_gif_src, 1)
+        gsrc_l.addWidget(btn_gif_browse)
+        gif_v.addLayout(gsrc_l)
+
+        # 구간(시작~끝, 초) + 총 길이
+        gseg_l = QHBoxLayout()
+        self.spn_gif_start = QDoubleSpinBox()
+        self.spn_gif_start.setRange(0.0, 999999.0)
+        self.spn_gif_start.setDecimals(1)
+        self.spn_gif_start.setSingleStep(0.5)
+        self.spn_gif_start.setSuffix(" 초")
+        self.spn_gif_end = QDoubleSpinBox()
+        self.spn_gif_end.setRange(0.0, 999999.0)
+        self.spn_gif_end.setDecimals(1)
+        self.spn_gif_end.setSingleStep(0.5)
+        self.spn_gif_end.setSuffix(" 초")
+        self.spn_gif_end.setSpecialValueText("(끝까지)")  # 0 이면 끝까지
+        self.lbl_gif_dur = QLabel("총 길이 -")
+        gseg_l.addWidget(QLabel("구간 시작:"))
+        gseg_l.addWidget(self.spn_gif_start)
+        gseg_l.addWidget(QLabel("끝:"))
+        gseg_l.addWidget(self.spn_gif_end)
+        gseg_l.addSpacing(8)
+        gseg_l.addWidget(self.lbl_gif_dur)
+        gseg_l.addStretch(1)
+        gif_v.addLayout(gseg_l)
+
+        # GIF 옵션(fps, 가로 폭) + 변환 버튼
+        gopt_l = QHBoxLayout()
+        self.spn_gif_fps = QSpinBox()
+        self.spn_gif_fps.setRange(1, 50)
+        self.spn_gif_fps.setValue(12)
+        self.spn_gif_fps.setSuffix(" fps")
+        self.spn_gif_width = QSpinBox()
+        self.spn_gif_width.setRange(0, 4096)
+        self.spn_gif_width.setValue(480)
+        self.spn_gif_width.setSpecialValueText("(원본)")  # 0 이면 원본 크기
+        self.spn_gif_width.setSuffix(" px")
+        self.btn_gif_make = QPushButton("🎞 GIF 만들기")
+        self.btn_gif_make.clicked.connect(self.on_make_gif)
+        self.lbl_gif_status = QLabel("대기 중")
+        gopt_l.addWidget(QLabel("프레임:"))
+        gopt_l.addWidget(self.spn_gif_fps)
+        gopt_l.addSpacing(8)
+        gopt_l.addWidget(QLabel("가로 폭:"))
+        gopt_l.addWidget(self.spn_gif_width)
+        gopt_l.addSpacing(8)
+        gopt_l.addWidget(self.btn_gif_make)
+        gopt_l.addWidget(self.lbl_gif_status, 1)
+        gif_v.addLayout(gopt_l)
+        root.addWidget(gif_box)
 
         # --- 실행 버튼 ---
         run_l = QHBoxLayout()
@@ -821,6 +887,8 @@ class MainWindow(QMainWindow):
         self.btn_record.setText("⏺ 영역 동영상 녹화 시작")
         self.lbl_record.setText(f"저장됨: {os.path.basename(path)} ({frames}프레임)")
         self.log(f"동영상 저장 완료 — {path} ({frames}프레임)")
+        # 방금 녹화한 영상을 GIF 변환 원본으로 자동 지정(길이도 프로빙)
+        self._load_gif_source(path)
         # 다음 녹화를 위해 파일명을 다음 번호로 자동 갱신
         self._refresh_video_name()
         QMessageBox.information(self, "동영상 녹화", f"저장 완료:\n{path}\n{frames}프레임")
@@ -830,6 +898,82 @@ class MainWindow(QMainWindow):
         self.lbl_record.setText("실패")
         self.log(f"동영상 녹화 실패: {msg}")
         QMessageBox.critical(self, "동영상 녹화 오류", msg)
+
+    # ----------------------------------------------------------- GIF 변환
+    def on_browse_gif_src(self) -> None:
+        start = self.txt_gif_src.text().strip()
+        if start and os.path.isfile(start):
+            start = os.path.dirname(start)
+        else:
+            start = self.txt_videodir.text().strip() or self.txt_savedir.text().strip()
+        path, _ = QFileDialog.getOpenFileName(
+            self, "GIF 로 변환할 동영상 선택", start,
+            "동영상 (*.mp4 *.avi *.mov *.mkv *.webm);;모든 파일 (*.*)")
+        if path:
+            self._load_gif_source(path)
+
+    def _load_gif_source(self, path: str) -> None:
+        """GIF 원본으로 동영상을 세팅하고 길이를 프로빙해 구간 기본값을 잡는다."""
+        self.txt_gif_src.setText(path)
+        dur = probe_duration(path)
+        self._gif_duration = dur
+        if dur > 0:
+            self.lbl_gif_dur.setText(f"총 길이 {dur:0.1f}초")
+            # 구간 상한을 실제 길이에 맞추고, 끝은 '끝까지'(0)로 초기화
+            self.spn_gif_start.setMaximum(dur)
+            self.spn_gif_end.setMaximum(dur)
+            self.spn_gif_start.setValue(0.0)
+            self.spn_gif_end.setValue(0.0)
+            self.log(f"GIF 원본 선택: {os.path.basename(path)} (길이 {dur:0.1f}초)")
+        else:
+            self.lbl_gif_dur.setText("총 길이 ? (구간을 직접 입력)")
+            self.log(f"GIF 원본 선택: {os.path.basename(path)} (길이 확인 실패)")
+
+    def on_make_gif(self) -> None:
+        # 진행 중이면 무시(중복 실행 방지)
+        if self._gifmaker is not None and self._gifmaker.isRunning():
+            self.log("이미 GIF 변환이 진행 중입니다.")
+            return
+
+        src = self.txt_gif_src.text().strip()
+        if not src or not os.path.isfile(src):
+            QMessageBox.warning(self, "동영상 없음",
+                                "GIF 로 변환할 동영상을 먼저 선택하세요.")
+            return
+
+        start = self.spn_gif_start.value()
+        end = self.spn_gif_end.value()  # 0 = 끝까지
+        if end > 0 and end <= start:
+            QMessageBox.warning(
+                self, "구간 확인",
+                f"끝({end:g}초)이 시작({start:g}초)보다 뒤여야 합니다.\n"
+                "끝을 0(=끝까지)으로 두거나 값을 다시 지정하세요.")
+            return
+
+        out = default_gif_path(src)
+        fps = self.spn_gif_fps.value()
+        width = self.spn_gif_width.value()
+
+        self._gifmaker = GifMaker(src, out, start, end, fps=fps, width=width)
+        self._gifmaker.note.connect(self.log)
+        self._gifmaker.finished_ok.connect(self._on_gif_finished)
+        self._gifmaker.failed.connect(self._on_gif_failed)
+        self._gifmaker.start()
+
+        self.btn_gif_make.setEnabled(False)
+        self.lbl_gif_status.setText("변환 중…")
+
+    def _on_gif_finished(self, path: str) -> None:
+        self.btn_gif_make.setEnabled(True)
+        self.lbl_gif_status.setText(f"저장됨: {os.path.basename(path)}")
+        self.log(f"GIF 저장 완료 — {path}")
+        QMessageBox.information(self, "GIF 변환", f"저장 완료:\n{path}")
+
+    def _on_gif_failed(self, msg: str) -> None:
+        self.btn_gif_make.setEnabled(True)
+        self.lbl_gif_status.setText("실패")
+        self.log(f"GIF 변환 실패: {msg}")
+        QMessageBox.critical(self, "GIF 변환 오류", msg)
 
     def log(self, msg: str) -> None:
         ts = datetime.now().strftime("%H:%M:%S")
@@ -854,4 +998,6 @@ class MainWindow(QMainWindow):
         if self._recorder and self._recorder.isRunning():
             self._recorder.stop()
             self._recorder.wait(3000)
+        if self._gifmaker and self._gifmaker.isRunning():
+            self._gifmaker.wait(3000)
         super().closeEvent(event)

@@ -6,6 +6,7 @@ captures/
 *.pdf
 *.mp4
 *.wav
+*.gif
 # 개인 설정(좌표·저장경로 등 PC마다 다름)
 config.json
 # 파이썬
@@ -18,3 +19,4 @@ venv/
 .venv/
 .claude/
 build_log.txt
+scratchpad_err.log

@@ -76,6 +76,7 @@ def capture(region, path):  # region = {"top":, "left":, "width":, "height":}
         img = sct.grab(region)
         mss.tools.to_png(img.rgb, img.size, output=path)
 ```
+
 - 파일명은 `page_{n:03d}.png` 형식으로 0패딩 순번
 
 ## config.json 형식
